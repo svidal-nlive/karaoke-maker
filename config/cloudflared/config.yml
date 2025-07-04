@@ -1,0 +1,14 @@
+tunnel: ${TUNNEL_TOKEN}
+credentials-file: /etc/cloudflared/creds/${TUNNEL_TOKEN}.json
+
+ingress:
+  - hostname: mydash.vectorhost.net
+    service: http://dashboard:80
+  - hostname: kapi.vectorhost.net
+    service: http://api:5000
+    originRequest:
+      noTLSVerify: true
+      httpHostHeader: kapi.vectorhost.net
+      disableChunkedEncoding: true
+      proxyAddress: api
+  - service: http_status:404

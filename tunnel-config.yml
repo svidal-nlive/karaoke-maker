@@ -1,0 +1,11 @@
+ingress:
+  - hostname: mydash.vectorhost.net
+    service: http://dashboard:80
+  - hostname: kapi.vectorhost.net
+    service: http://api:5000
+    originRequest:
+      noTLSVerify: true
+      http2Origin: false
+      connectTimeout: 10s
+      disableChunkedEncoding: true
+  - service: http_status:404

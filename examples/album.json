@@ -1,0 +1,22 @@
+{
+    "name": "Example Album",
+    "artist": "Various Artists",
+    "year": "2025",
+    "genre": "Pop",
+    "cover_art": "cover.jpg",
+    "description": "An example album showing the metadata format",
+    "tracks": [
+        {
+            "number": 1,
+            "title": "First Song",
+            "artist": "Artist One",
+            "duration": "3:45"
+        },
+        {
+            "number": 2,
+            "title": "Second Song",
+            "artist": "Artist Two",
+            "duration": "4:12"
+        }
+    ]
+}

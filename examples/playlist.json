@@ -1,0 +1,19 @@
+{
+    "name": "My Karaoke Playlist",
+    "creator": "User123",
+    "description": "A collection of favorite karaoke songs",
+    "created": "2025-07-03",
+    "cover_image": "playlist_cover.jpg",
+    "tracks": [
+        {
+            "title": "First Song",
+            "artist": "Artist One",
+            "tags": ["pop", "easy"]
+        },
+        {
+            "title": "Second Song",
+            "artist": "Artist Two",
+            "tags": ["rock", "medium"]
+        }
+    ]
+}

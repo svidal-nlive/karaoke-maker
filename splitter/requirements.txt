@@ -1,0 +1,6 @@
+redis==6.1.0
+requests==2.32.3
+pydub==0.25.1
+spleeter==2.4.2
+numba==0.56.4
+librosa==0.10.1
