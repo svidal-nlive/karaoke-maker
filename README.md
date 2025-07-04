@@ -43,6 +43,8 @@ The system consists of the following components:
 ```bash
 git clone https://github.com/yourusername/karaoke-maker.git
 cd karaoke-maker
+```
+
 ## Usage
 
 ### Adding Files for Processing
@@ -106,7 +108,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 # Key settings:
 # - API_BASE_URL: Set to your API domain (e.g., https://kapi.vectorhost.net/api)
 # - TUNNEL_TOKEN: Your Cloudflare tunnel token
-```
 
 3. Start the services:
 
