@@ -11,6 +11,12 @@ pipeline-data/**/
 !pipeline-data/**/
 !pipeline-data/**/.gitkeep
 
+# Redis data - never track
+redis-data/
+**/redis-data/
+pipeline-data/redis-data/
+pipeline-data/redis-data/**
+
 # Assets - ignore processed content but keep structure
 assets/covers/*
 !assets/covers/.gitkeep

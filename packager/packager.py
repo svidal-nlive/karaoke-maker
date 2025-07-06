@@ -222,20 +222,31 @@ def organize_output(filename, metadata):
     
     return output_path, album_cover_path
 
-def process_file(filename):
+def process_file(filename, data=None):
     """Process a file to merge stems, apply metadata, and organize output."""
+    if data is None:
+        data = {}
+    
+    # Get file_id from the filename (traditional way)
     file_id = os.path.splitext(filename)[0]
+    
+    # Check if we have a stable_id in the message data
+    stable_id = data.get('tracking_id') or data.get('stable_id')
+    
+    # If we have a stable_id, use it for tracking instead of the filename-based id
+    tracking_id = stable_id if stable_id else file_id
 
-    # Check if file was already processed
-    if is_file_processed(file_id):
-        log_processed_file(file_id)
-        return
-
+    # Check if file was already processed using the stable ID if available
+    if is_file_processed(tracking_id):
+        logger.info(f"File {filename} already processed (tracking ID: {tracking_id}), skipping")
+        log_processed_file(tracking_id)
+        return True
+    
     # Check if already packaged
-    status = get_processing_status(file_id)
+    status = get_processing_status(tracking_id)
     if status and int(status.get(STEP_PACKAGED, 0)):
-        logger.info(f"Already packaged {filename}, skipping")
-        return
+        logger.info(f"Already packaged {filename} (tracking ID: {tracking_id}), skipping")
+        return True
 
     def _process():
         # Get paths
@@ -245,10 +256,62 @@ def process_file(filename):
         
         # Check if files exist
         if not os.path.exists(stems_dir):
-            raise FileNotFoundError(f"Stems directory not found: {stems_dir}")
+            # Look for alternative stems directory with the same base name
+            base_name, ext = os.path.splitext(filename)
+            parts = base_name.split('_')
+            if len(parts) > 1 and len(parts[-1]) == 14 and parts[-1].isdigit():
+                # Remove timestamp suffix
+                original_base = '_'.join(parts[:-1])
+                
+                # Look for matching stems directories
+                matching_dirs = []
+                for dir_name in os.listdir(STEMS_DIR):
+                    if dir_name.startswith(original_base):
+                        matching_dirs.append(dir_name)
+                
+                if matching_dirs:
+                    # Use the most recent directory
+                    matching_dirs.sort(reverse=True)
+                    alt_stems_dir = os.path.join(STEMS_DIR, matching_dirs[0])
+                    
+                    logger.warning(f"Original stems directory not found: {stems_dir}")
+                    logger.warning(f"Using alternative stems directory: {alt_stems_dir}")
+                    
+                    # Update stems directory
+                    stems_dir = alt_stems_dir
+                else:
+                    raise FileNotFoundError(f"Stems directory not found: {stems_dir}")
+            else:
+                raise FileNotFoundError(f"Stems directory not found: {stems_dir}")
         
         if not os.path.exists(metadata_path):
-            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+            # Look for alternative metadata file with the same base name
+            base_name, ext = os.path.splitext(filename)
+            parts = base_name.split('_')
+            if len(parts) > 1 and len(parts[-1]) == 14 and parts[-1].isdigit():
+                # Remove timestamp suffix
+                original_base = '_'.join(parts[:-1])
+                
+                # Look for matching metadata files
+                matching_files = []
+                for file_name in os.listdir(METADATA_DIR):
+                    if file_name.startswith(original_base) and file_name.endswith(".json"):
+                        matching_files.append(file_name)
+                
+                if matching_files:
+                    # Use the most recent file
+                    matching_files.sort(reverse=True)
+                    alt_metadata_path = os.path.join(METADATA_DIR, matching_files[0])
+                    
+                    logger.warning(f"Original metadata file not found: {metadata_path}")
+                    logger.warning(f"Using alternative metadata file: {alt_metadata_path}")
+                    
+                    # Update metadata path
+                    metadata_path = alt_metadata_path
+                else:
+                    raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+            else:
+                raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
         
         # Load metadata
         with open(metadata_path, "r") as f:
@@ -284,15 +347,16 @@ def process_file(filename):
         if os.path.exists(merged_file):
             os.unlink(merged_file)
         
-        # Mark as packaged and fully processed
-        set_processing_step(file_id, STEP_PACKAGED)
-        mark_file_processed(file_id, metadata)
-        log_processed_file(file_id)
+        # Mark as packaged and fully processed - use tracking_id for consistent tracking
+        set_processing_step(tracking_id, STEP_PACKAGED)
+        mark_file_processed(tracking_id, metadata)
+        log_processed_file(tracking_id)
         
         # Add to packaged stream
         add_to_stream(STREAM_PACKAGED, {
             "filename": filename,
             "file_id": file_id,
+            "tracking_id": tracking_id,  # Include the stable tracking ID
             "timestamp": time.time(),
             "output_path": output_path
         })
@@ -422,8 +486,8 @@ def main():
                             
                             logger.info(f"Processing file: {filename}")
                             
-                            # Process the file
-                            process_file(filename)
+                            # Process the file with the data that includes tracking_id
+                            process_file(filename, data)
                             
                             # Acknowledge the message
                             acknowledge_message(stream_name, GROUP_NAME, message_id)

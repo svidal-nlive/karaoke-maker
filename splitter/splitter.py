@@ -144,25 +144,70 @@ def filter_and_export_stems(stems_folder, keep, dest_dir):
     
     return exported
 
-def process_file(filename):
+def process_file(filename, data=None):
     """Process file for stem splitting."""
+    if data is None:
+        data = {}
+    
+    # Get file_id from the filename (traditional way)
     file_id = os.path.splitext(filename)[0]
+    
+    # Check if we have a stable_id in the message data
+    stable_id = data.get('tracking_id') or data.get('stable_id')
+    
+    # If we have a stable_id, use it for tracking instead of the filename-based id
+    tracking_id = stable_id if stable_id else file_id
 
-    # Check if file was already processed
-    if is_file_processed(file_id):
-        log_processed_file(file_id)
-        return
+    # Check if file was already processed using the stable ID if available
+    if is_file_processed(tracking_id):
+        logger.info(f"File {filename} already processed (tracking ID: {tracking_id}), skipping")
+        log_processed_file(tracking_id)
+        return True
     
     # Check if stems were already extracted
-    status = get_processing_status(file_id)
+    status = get_processing_status(tracking_id)
     if status and int(status.get(STEP_STEMS, 0)):
-        logger.info(f"Stems already extracted for {filename}, skipping")
-        return
+        logger.info(f"Stems already extracted for {filename} (tracking ID: {tracking_id}), skipping")
+        return True
 
     def _process():
         # Get file paths
         queue_path = os.path.join(QUEUE_DIR, filename)
         stems_dir = os.path.join(STEMS_DIR, file_id)
+        
+        # Enhanced file not found handling
+        if not os.path.exists(queue_path):
+            # Get base name without extension and timestamp
+            base_name, ext = os.path.splitext(filename)
+            
+            # Try to find a file with the same base part but potentially different timestamp
+            # Extract the base part (before the timestamp)
+            parts = base_name.split('_')
+            if len(parts) > 1 and len(parts[-1]) == 14 and parts[-1].isdigit():
+                # Remove timestamp suffix
+                original_base = '_'.join(parts[:-1])
+                
+                # Look for files in queue directory with matching pattern
+                matching_files = []
+                for file in os.listdir(QUEUE_DIR):
+                    if file.startswith(original_base) and file.endswith(ext):
+                        matching_files.append(file)
+                
+                if matching_files:
+                    # Use the most recent file based on timestamp in filename
+                    matching_files.sort(reverse=True)
+                    alt_filename = matching_files[0]
+                    alt_path = os.path.join(QUEUE_DIR, alt_filename)
+                    
+                    logger.warning(f"Original file not found: {queue_path}")
+                    logger.warning(f"Using alternative file with same base name: {alt_path}")
+                    
+                    # Update filename and paths
+                    queue_path = alt_path
+                else:
+                    raise FileNotFoundError(f"Input file not found: {queue_path}")
+            else:
+                raise FileNotFoundError(f"Input file not found: {queue_path}")
         
         # Create stems directory
         os.makedirs(stems_dir, exist_ok=True)
@@ -170,13 +215,14 @@ def process_file(filename):
         # Split stems
         split_stems(queue_path, stems_dir)
         
-        # Mark stems step as complete
-        set_processing_step(file_id, STEP_STEMS)
+        # Mark stems step as complete - use tracking_id for consistent tracking
+        set_processing_step(tracking_id, STEP_STEMS)
         
         # Add to split done stream
         add_to_stream(STREAM_SPLIT_DONE, {
-            "filename": filename,  # Changed from "file" to "filename" to maintain consistency
+            "filename": filename,
             "file_id": file_id,
+            "tracking_id": tracking_id,  # Include the stable tracking ID
             "timestamp": time.time()
         })
         
@@ -307,8 +353,8 @@ def main():
                             
                             logger.info(f"Processing file: {filename}")
                             
-                            # Process the file
-                            process_file(filename)
+                            # Process the file with the data that includes stable_id
+                            process_file(filename, data)
                             
                             # Acknowledge the message
                             acknowledge_message(stream_name, GROUP_NAME, message_id)

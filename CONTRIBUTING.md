@@ -88,6 +88,11 @@ Note: As of July 2025, the API upload feature was modified to directly copy file
 - Processing state is maintained across system reboots
 - The Redis configuration uses AOF (Append Only File) persistence for better data durability
 
+Additionally, file tracking has been enhanced with stable identifiers to prevent redundant processing:
+- Files are now tracked using a combination of relative path and file content hash
+- Output files are checked to avoid reprocessing files that already have outputs
+- The pipeline shares consistent tracking IDs across all services
+
 ## Testing
 
 Please ensure all your changes include appropriate tests:

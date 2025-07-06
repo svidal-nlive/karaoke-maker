@@ -7,6 +7,7 @@ import json
 import shutil
 import datetime
 import uuid
+import hashlib
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -31,6 +32,7 @@ from pipeline_utils import (
 # --- Config ---
 INPUT_DIR = os.environ.get("INPUT_DIR", "/input")
 QUEUE_DIR = os.environ.get("QUEUE_DIR", "/queue")
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", 5))  # seconds
 ALLOWED_EXTENSIONS = [".mp3"]
 PLAYLIST_INFO_FILE = "playlist.json"
@@ -38,6 +40,63 @@ ALBUM_INFO_FILE = "album.json"
 
 # Setup logger
 logger = setup_logger("watcher")
+
+def calculate_file_hash(file_path, block_size=65536):
+    """Calculate a hash of the file for stable identification."""
+    file_hash = hashlib.md5()
+    with open(file_path, 'rb') as f:
+        for block in iter(lambda: f.read(block_size), b''):
+            file_hash.update(block)
+    return file_hash.hexdigest()
+
+def get_stable_file_id(file_path):
+    """Generate a stable ID for a file based on its path and content hash.
+    This ensures the same file is recognized even if the filename changes.
+    """
+    rel_path = os.path.relpath(file_path, INPUT_DIR)
+    # Create a stable ID using the relative path and a hash of the first 1MB
+    # This is faster than hashing the whole file but still provides good uniqueness
+    try:
+        file_hash = calculate_file_hash(file_path, block_size=1024*1024)
+        return f"{clean_string(rel_path)}:{file_hash[:10]}"
+    except Exception as e:
+        logger.error(f"Error calculating file hash: {e}")
+        # Fall back to just the path if hashing fails
+        return clean_string(rel_path)
+
+def is_output_file_exists(file_path):
+    """Check if output file already exists for this input file.
+    This provides a filesystem-based check in addition to Redis tracking.
+    """
+    try:
+        # Try to extract metadata from the file to determine artist/album structure
+        import mutagen
+        audio = mutagen.File(file_path)
+        
+        if audio and hasattr(audio, 'tags'):
+            artist = None
+            album = None
+            title = None
+            
+            # Extract metadata fields
+            if audio.tags:
+                if 'TPE1' in audio.tags:  # ID3 artist tag
+                    artist = str(audio.tags['TPE1'])
+                if 'TALB' in audio.tags:  # ID3 album tag
+                    album = str(audio.tags['TALB'])
+                if 'TIT2' in audio.tags:  # ID3 title tag
+                    title = str(audio.tags['TIT2'])
+            
+            # If we have artist, album and title, check if output file exists
+            if artist and album and title:
+                potential_output_path = os.path.join(OUTPUT_DIR, artist, album, f"{title}.mp3")
+                if os.path.exists(potential_output_path):
+                    logger.info(f"Output file already exists at {potential_output_path}")
+                    return True
+    except Exception as e:
+        logger.debug(f"Could not check output file existence: {e}")
+    
+    return False
 
 class InputFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -95,25 +154,40 @@ class InputFolderHandler(FileSystemEventHandler):
     def process_file(self, file_path, collection_info=None, collection_type=None):
         """Process a new file in the input directory."""
         filename = os.path.basename(file_path)
-        file_id = os.path.splitext(filename)[0]
-
-        # Generate a unique ID based on file path to prevent duplicate processing
-        unique_id = clean_string(os.path.relpath(file_path, INPUT_DIR))
         
-        # Check if file was already processed or is being processed
-        if is_file_processed(unique_id):
-            logger.debug(f"File {filename} already processed, skipping")
-            return
-        
-        # Check if file is already being processed
-        status = get_processing_status(unique_id)
-        if status:
-            logger.debug(f"File {filename} is already being processed, skipping")
-            return
-
         # Skip files that don't have allowed extensions
         if not any(file_path.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS):
             logger.debug(f"Skipping non-audio file: {file_path}")
+            return
+            
+        # Check if this file was uploaded via API
+        # API uploads already have a timestamp in the filename (e.g., filename_YYYYMMDDHHMMSS.ext)
+        base, ext = os.path.splitext(filename)
+        parts = base.split('_')
+        
+        # If the filename has a timestamp suffix from API upload, skip it completely
+        # This is more aggressive than the previous approach, but prevents any race conditions
+        if len(parts) > 1 and len(parts[-1]) == 14 and parts[-1].isdigit():
+            logger.info(f"File {filename} appears to be uploaded via API, skipping watcher processing")
+            return
+
+        # Generate a stable ID based on file path and content hash
+        stable_id = get_stable_file_id(file_path)
+        
+        # First check: Is there already an output file for this input?
+        if is_output_file_exists(file_path):
+            logger.info(f"Output file already exists for {filename}, skipping processing")
+            return
+            
+        # Second check: Was this file already processed according to Redis?
+        if is_file_processed(stable_id):
+            logger.info(f"File {filename} (ID: {stable_id}) already processed according to Redis, skipping")
+            return
+        
+        # Third check: Is file already being processed?
+        status = get_processing_status(stable_id)
+        if status:
+            logger.info(f"File {filename} (ID: {stable_id}) is already being processed, skipping")
             return
         
         # Wait for the file to be fully written and acquire lock
@@ -140,7 +214,7 @@ class InputFolderHandler(FileSystemEventHandler):
                 "job_id": job_id,
                 "timestamp": timestamp,
                 "status": "queued",
-                "unique_id": unique_id  # Add unique ID to track this specific file
+                "stable_id": stable_id  # Add stable ID for consistent tracking
             }
             
             # Add collection info if available
@@ -189,16 +263,17 @@ class InputFolderHandler(FileSystemEventHandler):
                     pass
                 return
             
-            # Set initial file status
+            # Set initial file status - using stable_id for consistent tracking
             set_file_status(unique_filename, "queued")
             
-            # Add to processing queue stream with collection info
+            # Add to processing queue stream with collection info and stable ID
             stream_data = {
                 "filename": unique_filename,
                 "original_filename": filename,
                 "original_path": rel_path,
                 "job_id": job_id,
-                "timestamp": timestamp
+                "timestamp": timestamp,
+                "stable_id": stable_id
             }
             
             if collection_info and collection_type:

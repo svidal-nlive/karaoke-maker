@@ -12,7 +12,7 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes --save 60 1
     volumes:
-      - redis-data:/data
+      - ./pipeline-data/redis-data:/data
     networks:
       - backend
 
@@ -147,7 +147,3 @@ services:
 networks:
   backend:
     name: backend
-
-volumes:
-  redis-data:
-    name: karaoke-maker-redis-data

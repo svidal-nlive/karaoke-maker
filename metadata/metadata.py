@@ -207,26 +207,68 @@ def process_file(filename, data=None):
     """Process file metadata."""
     if data is None:
         data = {}
+    
+    # Get file_id from the filename (traditional way)
     file_id = os.path.splitext(filename)[0]
+    
+    # Check if we have a stable_id in the message data (from watcher)
+    stable_id = data.get('stable_id')
+    
+    # If we have a stable_id, use it for tracking instead of the filename-based id
+    tracking_id = stable_id if stable_id else file_id
 
-    # Check if file was already processed
-    if is_file_processed(file_id):
-        log_processed_file(file_id)
-        return
+    # Check if file was already processed using the stable ID if available
+    if is_file_processed(tracking_id):
+        logger.info(f"File {filename} already processed (tracking ID: {tracking_id}), skipping")
+        log_processed_file(tracking_id)
+        return True
     
     # Check if metadata was already extracted
-    status = get_processing_status(file_id)
+    status = get_processing_status(tracking_id)
     if status and int(status.get(STEP_METADATA, 0)):
-        logger.info(f"Metadata already extracted for {filename}, skipping")
-        return
+        logger.info(f"Metadata already extracted for {filename} (tracking ID: {tracking_id}), skipping")
+        return True
 
     def _process():
         # Get file paths
         queue_path = os.path.join(QUEUE_DIR, filename)
         metadata_path = os.path.join(METADATA_DIR, f"{filename}.json")
         
+        # Enhanced file not found handling:
+        # If the exact filename doesn't exist, look for files with the same base name but different timestamp
         if not os.path.exists(queue_path):
-            raise FileNotFoundError(f"Input file not found: {queue_path}")
+            # Get base name without extension and timestamp
+            base_name, ext = os.path.splitext(filename)
+            
+            # Try to find a file with the same base part but potentially different timestamp
+            # Extract the base part (before the timestamp)
+            parts = base_name.split('_')
+            if len(parts) > 1 and len(parts[-1]) == 14 and parts[-1].isdigit():
+                # Remove timestamp suffix
+                original_base = '_'.join(parts[:-1])
+                
+                # Look for files in queue directory with matching pattern
+                matching_files = []
+                for file in os.listdir(QUEUE_DIR):
+                    if file.startswith(original_base) and file.endswith(ext):
+                        matching_files.append(file)
+                
+                if matching_files:
+                    # Use the most recent file based on timestamp in filename
+                    matching_files.sort(reverse=True)
+                    alt_filename = matching_files[0]
+                    alt_path = os.path.join(QUEUE_DIR, alt_filename)
+                    
+                    logger.warning(f"Original file not found: {queue_path}")
+                    logger.warning(f"Using alternative file with same base name: {alt_path}")
+                    
+                    # Update filename and paths
+                    queue_path = alt_path
+                    metadata_path = os.path.join(METADATA_DIR, f"{alt_filename}.json")
+                else:
+                    raise FileNotFoundError(f"Input file not found: {queue_path}")
+            else:
+                raise FileNotFoundError(f"Input file not found: {queue_path}")
         
         # Create metadata directory if it doesn't exist
         os.makedirs(METADATA_DIR, exist_ok=True)
@@ -234,6 +276,7 @@ def process_file(filename, data=None):
         # Extract metadata
         metadata = extract_metadata(queue_path)
         metadata["file_id"] = file_id
+        metadata["tracking_id"] = tracking_id  # Add the stable tracking ID
         metadata["original_filename"] = data.get("original_filename")
         metadata["original_path"] = data.get("original_path")
         metadata["job_id"] = data.get("job_id")
@@ -249,17 +292,18 @@ def process_file(filename, data=None):
                 os.unlink(temp_metadata_path)
             raise e
         
-        # Mark metadata step as complete
-        set_processing_step(file_id, STEP_METADATA)
+        # Mark metadata step as complete - use tracking_id for consistent tracking
+        set_processing_step(tracking_id, STEP_METADATA)
         
         # If cover art was handled, mark that step too
         if metadata.get("has_cover_art"):
-            set_processing_step(file_id, STEP_COVER_ART)
+            set_processing_step(tracking_id, STEP_COVER_ART)
         
         # Add to metadata done stream
         add_to_stream(STREAM_METADATA_DONE, {
             "filename": filename,
             "file_id": file_id,
+            "tracking_id": tracking_id,  # Include the stable tracking ID
             "timestamp": time.time(),
             "metadata": {
                 "title": metadata.get("tags", {}).get("title", ["Unknown"])[0],
