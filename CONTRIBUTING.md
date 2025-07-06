@@ -64,6 +64,25 @@ The project is organized as a microservice architecture:
 - **Packager**: Processes and finalizes output files
 - **Dashboard**: User interface
 
+## Pipeline Architecture Notes
+
+### File Processing Flow
+
+The system processes files through a multi-stage pipeline:
+
+1. **File Intake**: Files can be added to the system in two ways:
+   - Uploaded via the API endpoint: Files are saved to the input directory and copied to the queue directory.
+   - Added directly to the input directory: Files are detected by the watcher service, which copies them to the queue directory.
+
+2. **Queue Processing**: All files in the queue directory are processed by subsequent services:
+   - Metadata extraction
+   - Stem separation
+   - Packaging (mixing stems and adding metadata)
+
+3. **Output**: Processed files are saved to the output directory with their original metadata.
+
+Note: As of July 2025, the API upload feature was modified to directly copy files to both the input and queue directories to ensure consistent processing with files added manually to the input directory.
+
 ## Testing
 
 Please ensure all your changes include appropriate tests:
