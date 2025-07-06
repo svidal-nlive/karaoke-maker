@@ -83,6 +83,11 @@ The system processes files through a multi-stage pipeline:
 
 Note: As of July 2025, the API upload feature was modified to directly copy files to both the input and queue directories to ensure consistent processing with files added manually to the input directory.
 
+**Important**: Redis data is not persisted between container restarts. This means that:
+- Previously processed files may be reprocessed after a restart if they remain in the input directory
+- Files uploaded via API (with timestamp in filename) are skipped based on filename pattern
+- For production environments where data persistence is critical, consider adding a Redis volume in the docker-compose.yml file
+
 ## Testing
 
 Please ensure all your changes include appropriate tests:
