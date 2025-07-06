@@ -1,24 +1,6 @@
 # version: "3.9"
 
 services:
-  # ————————————————————— Caddy Reverse Proxy —————————————————————
-  # caddy:
-  #   image: caddy:2-alpine
-  #   restart: unless-stopped
-  #   ports:
-  #     - "7080:80"
-  #     - "7443:443"
-  #   volumes:
-  #     - ./Caddyfile:/etc/caddy/Caddyfile
-  #     - caddy_data:/data
-  #     - caddy_config:/config
-  #     - caddy_logs:/var/log/caddy
-  #   networks:
-  #     - backend
-  #     - frontend
-  #   depends_on:
-  #     - api
-
   # ————————————————————— Redis —————————————————————
   redis:
     image: redis:8-alpine
@@ -28,6 +10,9 @@ services:
       REDIS_PORT: 6379
     ports:
       - "6379:6379"
+    command: redis-server --appendonly yes --save 60 1
+    volumes:
+      - redis-data:/data
     networks:
       - backend
 
@@ -42,6 +27,7 @@ services:
     env_file: .env
     depends_on:
       - redis
+      - cloudflared
     networks:
       - backend
     volumes:
@@ -49,10 +35,6 @@ services:
       - ./pipeline-data/output:/output
       - ./pipeline-data/queue:/queue
       - ./pipeline-data/metadata:/metadata
-    environment:
-      - VIRTUAL_HOST=kapi.vectorhost.net
-      - VIRTUAL_PORT=5000
-      - LETSENCRYPT_HOST=kapi.vectorhost.net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s
@@ -94,7 +76,7 @@ services:
     volumes:
       - ./pipeline-data/queue:/queue
       - ./pipeline-data/metadata:/metadata
-      - ./assets:/assets
+      - ./pipeline-data/assets:/assets
 
   # ————————————————————— Stem splitter —————————————————————
   splitter:
@@ -134,7 +116,7 @@ services:
       - ./pipeline-data/stems:/stems
       - ./pipeline-data/metadata:/metadata
       - ./pipeline-data/output:/output
-      - ./assets:/assets
+      - ./pipeline-data/assets:/assets
 
   # ————————————————————— Dashboard (static + nginx) —————————————————————
   dashboard:
@@ -144,41 +126,28 @@ services:
       args:
         VITE_API_BASE: https://kapi.vectorhost.net/api
     depends_on:
-      - api
+      api:
+        condition: service_started
     networks:
       - backend
-    environment:
-      - VIRTUAL_HOST=mydash.vectorhost.net
-      - VIRTUAL_PORT=80
-      - LETSENCRYPT_HOST=mydash.vectorhost.net
 
   # ————————————————————— Cloudflare Tunnel —————————————————————
   # This service requires a Cloudflare Tunnel token to be set in the .env file.
-  # Make sure to set TUNNEL_TOKEN in your .env file.
-  tunnel:
-    container_name: karaoke-maker-tunnel
+  # Make sure to set CF_TOKEN in your .env file.
+  cloudflared:
     image: cloudflare/cloudflared:latest
+    container_name: karaoke-maker-tunnel
     restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yml run
+    command: tunnel --no-autoupdate run
     environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+      - TUNNEL_TOKEN=${CF_TOKEN}
     networks:
       - backend
-    volumes:
-      - ./config/cloudflared:/etc/cloudflared:ro
-    depends_on:
-      api:
-        condition: service_started
-      dashboard:
-        condition: service_started
 
 networks:
-  frontend:
-    name: frontend
   backend:
     name: backend
 
 volumes:
-  caddy_data:
-  caddy_config:
-  caddy_logs:
+  redis-data:
+    name: karaoke-maker-redis-data
