@@ -7,9 +7,10 @@
 !.env.example
 
 # Pipeline data - ignore contents but keep directory structure
-pipeline-data/**/
+pipeline-data/**
 !pipeline-data/**/
 !pipeline-data/**/.gitkeep
+!pipeline-data/assets/covers/default.jpg
 
 # Redis data - never track
 redis-data/
