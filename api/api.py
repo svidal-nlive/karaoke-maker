@@ -565,15 +565,38 @@ def upload_file():
         base, ext = os.path.splitext(filename)
         unique_filename = f"{base}_{timestamp}{ext}"
         
-        # Save the file
+        # Save the file to input directory
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
         file.save(file_path)
         
+        # Copy the file to queue directory (similar to how watcher service does it)
+        # Create queue directory if it doesn't exist
+        queue_dir = os.environ.get("QUEUE_DIR", "/queue")
+        os.makedirs(queue_dir, exist_ok=True)
+        
+        # Copy the file to queue directory
+        queue_path = os.path.join(queue_dir, unique_filename)
+        shutil.copy2(file_path, queue_path)
+        
+        # Create a job state file in the queue directory
+        job_id = str(uuid.uuid4())
+        job_state = {
+            "filename": unique_filename,
+            "original_filename": filename,
+            "job_id": job_id,
+            "timestamp": timestamp,
+            "status": "queued"
+        }
+        
+        # Write job state to queue directory
+        job_state_path = os.path.join(queue_dir, f"{unique_filename}.jobstate.json")
+        with open(job_state_path, 'w') as f:
+            json.dump(job_state, f, indent=2)
+        
         # Set initial file status
-        set_file_status(unique_filename, "uploaded")
+        set_file_status(unique_filename, "queued")
         
         # Add to processing queue
-        job_id = str(uuid.uuid4())
         add_to_stream(STREAM_QUEUED, {
             "filename": unique_filename,
             "original_filename": filename,
@@ -582,6 +605,7 @@ def upload_file():
         })
         
         logger.info(f"File uploaded: {unique_filename}, Job ID: {job_id}")
+        logger.info(f"Copied file to queue: {queue_path}")
         
         return jsonify({
             "status": "success", 
@@ -770,7 +794,14 @@ def get_jobs():
                 continue
         
         # Sort by created_at, newest first
-        jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        # Handle None values in created_at to prevent comparison errors
+        def safe_sort_key(job):
+            created_at = job.get("created_at")
+            if created_at is None:
+                return ""  # Default value for None timestamps
+            return created_at
+            
+        jobs.sort(key=safe_sort_key, reverse=True)
         
         # Calculate total before pagination
         total_jobs = len(jobs)
